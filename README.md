@@ -5,12 +5,12 @@
 
 ### Installing
 
-    $ go get github.com/bernerdschaefer/eventsource
+    $ go get github.com/stalexteam/eventsource_go
 
 ### Importing
 
 ```go
-import "github.com/bernerdschaefer/eventsource"
+import "github.com/stalexteam/eventsource_go"
 ```
 
 ### Docs
