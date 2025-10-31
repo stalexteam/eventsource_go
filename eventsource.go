@@ -35,11 +35,11 @@ type EventSource struct {
 	dec         *Decoder
 	lastEventID string
 
-	OnConnect    func(url string)
-	OnDisconnect func(url string, err error)
-	OnError      func(url string, err error)
+    ReadTimeout time.Duration
 
-	readTimeout time.Duration
+    OnConnect    func(url string)
+    OnDisconnect func(url string, err error)
+    OnError      func(url string, err error)
 }
 
 // New prepares an EventSource. retry is the reconnection interval.
@@ -50,7 +50,7 @@ func New(req *http.Request, retry time.Duration) *EventSource {
 	return &EventSource{
 		retry:       retry,
 		request:     req,
-		readTimeout: 15 * time.Second, // default read timeout
+		ReadTimeout: 15 * time.Second, // default read timeout
 	}
 }
 
@@ -74,7 +74,7 @@ func (es *EventSource) connect() {
 
 		es.request.Header.Set("Last-Event-Id", es.lastEventID)
 
-		client := http.Client{Timeout: es.readTimeout}
+		client := http.Client{Timeout: es.ReadTimeout}
 		resp, err := client.Do(es.request)
 		if err != nil {
 			if es.OnError != nil {
@@ -122,7 +122,7 @@ func (es *EventSource) connect() {
 		}
 
 		// wrap body with timeout checker
-		es.r = &timeoutReader{r: resp.Body, timeout: es.readTimeout}
+		es.r = &timeoutReader{r: resp.Body, timeout: es.ReadTimeout}
 		es.dec = NewDecoder(es.r)
 
 		if es.OnConnect != nil {
