@@ -1,5 +1,5 @@
 // Package eventsource provides the building blocks for consuming and building
-// EventSource services.
+// EventSource services, with better visibility and reconnect diagnostics.
 package eventsource
 
 import (
@@ -13,17 +13,14 @@ import (
 )
 
 var (
-	// ErrClosed signals that the event source has been closed and will not be
-	// reopened.
+	// ErrClosed signals that the event source has been closed and will not be reopened.
 	ErrClosed = errors.New("closed")
 
-	// ErrInvalidEncoding is returned by Encoder and Decoder when invalid UTF-8
-	// event data is encountered.
+	// ErrInvalidEncoding is returned by Encoder and Decoder when invalid UTF-8 event data is encountered.
 	ErrInvalidEncoding = errors.New("invalid UTF-8 sequence")
 )
 
-// An Event is a message can be written to an event stream and read from an
-// event source.
+// Event represents one SSE event.
 type Event struct {
 	Type    string
 	ID      string
@@ -32,8 +29,7 @@ type Event struct {
 	ResetID bool
 }
 
-// An EventSource consumes server sent events over HTTP with automatic
-// recovery.
+// EventSource consumes server-sent events with auto-reconnect and state reporting.
 type EventSource struct {
 	retry       time.Duration
 	request     *http.Request
@@ -41,11 +37,14 @@ type EventSource struct {
 	r           io.ReadCloser
 	dec         *Decoder
 	lastEventID string
+
+	// optional callbacks
+	OnConnect    func(url string)
+	OnDisconnect func(url string, err error)
+	OnError      func(url string, err error)
 }
 
-// New prepares an EventSource. The connection is automatically managed, using
-// req to connect, and retrying from recoverable errors after waiting the
-// provided retry duration.
+// New prepares an EventSource. It reconnects after transient errors with the provided retry interval.
 func New(req *http.Request, retry time.Duration) *EventSource {
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
@@ -56,73 +55,104 @@ func New(req *http.Request, retry time.Duration) *EventSource {
 	}
 }
 
-// Close the source. Any further calls to Read() will return ErrClosed.
+// Close stops the stream permanently.
 func (es *EventSource) Close() {
 	if es.r != nil {
-		es.r.Close()
+		_ = es.r.Close()
 	}
 	es.err = ErrClosed
 }
 
-// Connect to an event source, validate the response, and gracefully handle
-// reconnects.
+// Connect tries to establish or re-establish a connection.
 func (es *EventSource) connect() {
+	url := es.request.URL.String()
+
 	for es.err == nil {
 		if es.r != nil {
-			es.r.Close()
-			<-time.After(es.retry)
+			_ = es.r.Close()
+			time.Sleep(es.retry)
 		}
 
 		es.request.Header.Set("Last-Event-Id", es.lastEventID)
 
 		resp, err := http.DefaultClient.Do(es.request)
-
 		if err != nil {
-			continue // reconnect
+			if es.OnError != nil {
+				es.OnError(url, fmt.Errorf("connection attempt failed: %w", err))
+			}
+			time.Sleep(es.retry)
+			continue
 		}
 
-		if resp.StatusCode >= 500 {
-			// assumed to be temporary, try reconnecting
-			resp.Body.Close()
-		} else if resp.StatusCode == 204 {
-			resp.Body.Close()
-			es.err = ErrClosed
-		} else if resp.StatusCode != 200 {
-			resp.Body.Close()
-			es.err = fmt.Errorf("endpoint returned unrecoverable status %q", resp.Status)
-		} else {
-			mediatype, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		switch {
+		case resp.StatusCode >= 500:
+			_ = resp.Body.Close()
+			if es.OnError != nil {
+				es.OnError(url, fmt.Errorf("temporary server error: %s", resp.Status))
+			}
+			time.Sleep(es.retry)
+			continue
 
+		case resp.StatusCode == 204:
+			_ = resp.Body.Close()
+			es.err = ErrClosed
+			if es.OnDisconnect != nil {
+				es.OnDisconnect(url, es.err)
+			}
+			return
+
+		case resp.StatusCode != 200:
+			_ = resp.Body.Close()
+			es.err = fmt.Errorf("unrecoverable HTTP status: %s", resp.Status)
+			if es.OnError != nil {
+				es.OnError(url, es.err)
+			}
+			return
+
+		default:
+			mediatype, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 			if mediatype != "text/event-stream" {
-				resp.Body.Close()
-				es.err = fmt.Errorf("invalid content type %q", resp.Header.Get("Content-Type"))
-			} else {
-				es.r = resp.Body
-				es.dec = NewDecoder(es.r)
+				_ = resp.Body.Close()
+				es.err = fmt.Errorf("invalid content type: %s", resp.Header.Get("Content-Type"))
+				if es.OnError != nil {
+					es.OnError(url, es.err)
+				}
 				return
 			}
 		}
+
+		es.r = resp.Body
+		es.dec = NewDecoder(es.r)
+
+		if es.OnConnect != nil {
+			es.OnConnect(url)
+		}
+
+		return
 	}
 }
 
-// Read an event from EventSource. If an error is returned, the EventSource
-// will not reconnect, and any further call to Read() will return the same
-// error.
+// Read returns the next event, reconnecting if possible.
 func (es *EventSource) Read() (Event, error) {
+	if es.err == ErrClosed {
+		return Event{}, ErrClosed
+	}
+
 	if es.r == nil {
 		es.connect()
 	}
 
 	for es.err == nil {
 		var e Event
-
 		err := es.dec.Decode(&e)
 
 		if err == ErrInvalidEncoding {
 			continue
 		}
-
 		if err != nil {
+			if es.OnDisconnect != nil {
+				es.OnDisconnect(es.request.URL.String(), err)
+			}
 			es.connect()
 			continue
 		}
