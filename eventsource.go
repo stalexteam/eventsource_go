@@ -37,6 +37,7 @@ type EventSource struct {
 	lastEventID string
 
 	IdleTimeout time.Duration
+	RetryOverride time.Duration
 
 	OnConnect    func(url string)
 	OnDisconnect func(url string, err error)
@@ -52,6 +53,7 @@ func New(req *http.Request, retry time.Duration) *EventSource {
 		retry:       retry,
 		request:     req,
 		IdleTimeout: 15 * time.Second, // default timeout
+		RetryOverride: 0,
 	}
 }
 
@@ -195,7 +197,11 @@ func (es *EventSource) Read() (Event, error) {
 
 		if len(e.Retry) > 0 {
 			if retry, err := strconv.Atoi(e.Retry); err == nil {
-				es.retry = time.Duration(retry) * time.Millisecond
+				if es.RetryOverride != 0 {
+					es.retry = es.RetryOverride // <-- используем переопределение
+				} else {
+					es.retry = time.Duration(retry) * time.Millisecond
+				}
 			}
 		}
 
