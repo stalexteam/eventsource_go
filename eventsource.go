@@ -2,6 +2,7 @@
 package eventsource
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,11 +36,11 @@ type EventSource struct {
 	dec         *Decoder
 	lastEventID string
 
-    ReadTimeout time.Duration
+	IdleTimeout time.Duration
 
-    OnConnect    func(url string)
-    OnDisconnect func(url string, err error)
-    OnError      func(url string, err error)
+	OnConnect    func(url string)
+	OnDisconnect func(url string, err error)
+	OnError      func(url string, err error)
 }
 
 // New prepares an EventSource. retry is the reconnection interval.
@@ -50,7 +51,7 @@ func New(req *http.Request, retry time.Duration) *EventSource {
 	return &EventSource{
 		retry:       retry,
 		request:     req,
-		ReadTimeout: 15 * time.Second, // default read timeout
+		IdleTimeout: 15 * time.Second, // default timeout
 	}
 }
 
@@ -74,7 +75,23 @@ func (es *EventSource) connect() {
 
 		es.request.Header.Set("Last-Event-Id", es.lastEventID)
 
-		client := http.Client{Timeout: es.ReadTimeout}
+		var tcpConn net.Conn
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := net.DialTimeout(network, addr, es.IdleTimeout)
+				if err != nil {
+					return nil, err
+				}
+				tcpConn = conn
+				return conn, nil
+			},
+		}
+
+		client := &http.Client{
+			Transport: transport,
+			Timeout:   0,
+		}
+
 		resp, err := client.Do(es.request)
 		if err != nil {
 			if es.OnError != nil {
@@ -121,8 +138,12 @@ func (es *EventSource) connect() {
 			}
 		}
 
-		// wrap body with timeout checker
-		es.r = &timeoutReader{r: resp.Body, timeout: es.ReadTimeout}
+		// wrap body 
+		es.r = &timeoutReader{
+			conn:    tcpConn,
+			r:       resp.Body,
+			timeout: es.IdleTimeout,
+		}
 		es.dec = NewDecoder(es.r)
 
 		if es.OnConnect != nil {
@@ -186,26 +207,22 @@ func (es *EventSource) Read() (Event, error) {
 
 // timeoutReader wraps an io.ReadCloser to enforce a read timeout.
 type timeoutReader struct {
-	r       io.ReadCloser
+	conn    net.Conn
+	r       io.Reader
 	timeout time.Duration
 }
 
 func (t *timeoutReader) Read(p []byte) (int, error) {
-	if t.r == nil {
-		return 0, io.EOF
+	if t.timeout > 0 {
+		t.conn.SetReadDeadline(time.Now().Add(t.timeout))
 	}
-
-	type readerWithDeadline interface {
-		SetReadDeadline(time.Time) error
+	n, err := t.r.Read(p)
+	if n > 0 && t.timeout > 0 {
+		t.conn.SetReadDeadline(time.Now().Add(t.timeout))
 	}
-
-	if rc, ok := t.r.(readerWithDeadline); ok {
-		_ = rc.SetReadDeadline(time.Now().Add(t.timeout))
-	}
-
-	return t.r.Read(p)
+	return n, err
 }
 
 func (t *timeoutReader) Close() error {
-	return t.r.Close()
+	return t.conn.Close()
 }

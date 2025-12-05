@@ -12,7 +12,7 @@ This fork improves on the original by:
 - Reporting successful connections via `OnConnect`.
 - Reporting disconnections via `OnDisconnect`.
 - Auto-reconnect on recoverable errors with configurable retry intervals.
-- Optional read timeout support via `SetReadTimeout`.
+- Optional read timeout support via `SetIdleTimeout`.
 
 ### Installing
 
@@ -50,7 +50,7 @@ sseIO.es.OnError = func(url string, err error) {
 }
 
 // Optional: set read timeout
-sseIO.es.SetReadTimeout(10 * time.Second)
+sseIO.es.SetIdleTimeout(10 * time.Second)
 
 // Start reading events
 err := sseIO.Start()
