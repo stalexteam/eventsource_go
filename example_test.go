@@ -2,7 +2,7 @@ package eventsource_test
 
 import (
 	"fmt"
-	"github.com/bernerdschaefer/eventsource"
+	"github.com/stalexteam/eventsource_go"
 	"io"
 	"log"
 	"net/http"
