@@ -43,21 +43,15 @@ func (d *Decoder) ReadField() (field string, value []byte, err error) {
 		d.checkBOM()
 	}
 
-	var buf []byte
-
-	for {
-		line, isPrefix, err := d.r.ReadLine()
-
-		if err != nil {
-			return "", nil, err
-		}
-
-		buf = append(buf, line...)
-
-		if !isPrefix {
-			break
-		}
+	// Use ReadBytes instead of ReadLine to handle lines longer than 4096 bytes
+	// ReadBytes will read until '\n' or error, handling arbitrarily long lines
+	line, err := d.r.ReadBytes('\n')
+	if err != nil && err != io.EOF {
+		return "", nil, err
 	}
+
+	// Remove trailing '\n' and '\r' if present
+	buf := bytes.TrimRight(line, "\r\n")
 
 	if len(buf) == 0 {
 		return "", nil, nil
