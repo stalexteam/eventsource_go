@@ -57,6 +57,12 @@ func (d *Decoder) ReadField() (field string, value []byte, err error) {
 		return "", nil, nil
 	}
 
+	// Handle comments: lines starting with ':' should be ignored (SSE spec)
+	if len(buf) > 0 && buf[0] == ':' {
+		// This is a comment, return empty field to skip it
+		return "", nil, nil
+	}
+
 	parts := bytes.SplitN(buf, []byte{':'}, 2)
 	field = string(parts[0])
 

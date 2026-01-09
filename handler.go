@@ -10,6 +10,8 @@ import (
 // event sources. It receives the ID of the last event processed by the client,
 // and Encoder to deliver messages, and a channel to be notified if the client
 // connection is closed.
+// The stop channel will be closed when the client disconnects or the request
+// context is cancelled.
 type Handler func(lastId string, encoder *Encoder, stop <-chan bool)
 
 func (h Handler) acceptable(accept string) bool {
@@ -47,11 +49,12 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
 
-	var stop <-chan bool
-
-	if notifier, ok := w.(http.CloseNotifier); ok {
-		stop = notifier.CloseNotify()
-	}
+	// Use request context for cancellation instead of deprecated CloseNotifier
+	stop := make(chan bool, 1)
+	go func() {
+		<-r.Context().Done()
+		close(stop)
+	}()
 
 	h(r.Header.Get("Last-Event-Id"), NewEncoder(w), stop)
 }

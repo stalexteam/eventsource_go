@@ -51,7 +51,13 @@ func (e *Encoder) WriteField(field string, value []byte) error {
 		return ErrInvalidEncoding
 	}
 
-	for _, line := range bytes.Split(value, []byte{'\n'}) {
+	lines := bytes.Split(value, []byte{'\n'})
+	for i, line := range lines {
+		// Skip empty lines except when they're part of multi-line data
+		if len(line) == 0 && i > 0 && i < len(lines)-1 {
+			continue
+		}
+
 		if len(line) > 0 && line[len(line)-1] == '\r' {
 			line = line[:len(line)-1]
 		}
@@ -76,7 +82,12 @@ func (e *Encoder) writeField(field string, value []byte) (err error) {
 
 // Encode writes an event to the connection.
 func (e *Encoder) Encode(event Event) error {
-	if event.ResetID || len(event.ID) > 0 {
+	if event.ResetID {
+		// Send "id:" with empty value to reset the last event ID
+		if _, err := fmt.Fprintf(e.w, "id:\n"); err != nil {
+			return err
+		}
+	} else if len(event.ID) > 0 {
 		if err := e.WriteField("id", []byte(event.ID)); err != nil {
 			return err
 		}
