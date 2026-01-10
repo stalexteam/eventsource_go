@@ -16,9 +16,19 @@ import (
 var (
 	ErrClosed           = errors.New("closed")
 	ErrConnectionFailed = errors.New("connection failed")
+	ErrConnectionClosed = errors.New("connection closed")
+	ErrEncoderClosed    = errors.New("encoder closed")
 	ErrEmptyLine        = errors.New("empty line received")
 	ErrInvalidEncoding  = errors.New("invalid UTF-8 sequence")
 )
+
+// IsConnectionError checks if the error is a connection-related error.
+func IsConnectionError(err error) bool {
+	return err == ErrConnectionClosed ||
+		err == ErrEncoderClosed ||
+		err == io.ErrClosedPipe ||
+		err == io.EOF
+}
 
 // Event represents a single SSE event.
 type Event struct {
